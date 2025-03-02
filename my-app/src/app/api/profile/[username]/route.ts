@@ -65,10 +65,8 @@ async function getLatestProfileFromS3(username: string) {
     }
   }
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { username: string } }
-) {
+export async function GET(request: NextRequest, props: { params: Promise<{ username: string }> }) {
+  const params = await props.params;
   // Make sure username exists before using it
   if (!params || !params.username) {
     return NextResponse.json(
