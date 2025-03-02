@@ -41,6 +41,8 @@ interface InstagramData {
   user: InstagramUser;
   posts: InstagramPost[];
   scrapedAt: string;
+  status?: string;
+  error?: string;
 }
 
 export default function ProfilePage() {
@@ -57,17 +59,31 @@ export default function ProfilePage() {
     
     const fetchData = async () => {
       try {
+        console.log(`Fetching profile data for: ${username}`);
         const response = await fetch(`/api/profile/${username}`);
         
         if (!response.ok) {
-          throw new Error('Failed to fetch profile data');
+          const errorData = await response.json();
+          throw new Error(errorData.message || `Error ${response.status}: Failed to fetch profile data`);
         }
         
         const data = await response.json();
-        setProfileData(data);
-      } catch (err) {
+        console.log('Received profile data:', data);
+        
+        if (!data || !data.user) {
+          console.error('Incomplete data received:', data);
+          setError('Received incomplete profile data');
+          setProfileData(null);
+        } else {
+          setProfileData(data);
+          // Set error if there's a status or error message in the data
+          if (data.status === 'error' || data.status === 'empty_or_private') {
+            setError(data.error || 'This account may be private or does not exist');
+          }
+        }
+      } catch (err: any) {
         console.error('Error fetching profile:', err);
-        setError('Failed to load profile data. Please try again.');
+        setError(`Failed to load profile data: ${err.message}`);
       } finally {
         setLoading(false);
       }
@@ -81,18 +97,18 @@ export default function ProfilePage() {
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
         <div className="text-center">
           <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-blue-600 border-r-transparent"></div>
-          <p className="mt-4 text-gray-700">Loading profile data...</p>
+          <p className="mt-4 text-gray-700">Loading profile data for @{username}...</p>
         </div>
       </div>
     );
   }
   
-  if (error || !profileData) {
+  if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
         <div className="text-center max-w-md mx-auto px-4">
           <h2 className="text-xl font-bold text-red-600 mb-2">Error</h2>
-          <p className="text-gray-700">{error || 'Failed to load profile data'}</p>
+          <p className="text-gray-700">{error}</p>
           <button
             onClick={() => router.push('/')}
             className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
@@ -104,7 +120,24 @@ export default function ProfilePage() {
     );
   }
   
-  const { user, posts, scrapedAt } = profileData;
+  if (!profileData || !profileData.user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="text-center max-w-md mx-auto px-4">
+          <h2 className="text-xl font-bold text-yellow-600 mb-2">No Profile Data</h2>
+          <p className="text-gray-700">Could not retrieve profile data for @{username}</p>
+          <button
+            onClick={() => router.push('/')}
+            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            Go Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+  
+  const { user, posts = [], scrapedAt = new Date().toISOString() } = profileData;
   
   return (
     <div className="min-h-screen bg-gray-100">
@@ -113,10 +146,10 @@ export default function ProfilePage() {
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <div className="flex flex-col sm:flex-row items-center">
             <div className="w-24 h-24 relative rounded-full overflow-hidden mb-4 sm:mb-0 sm:mr-6">
-              {user.profilePicUrl ? (
+              {user?.profilePicUrl ? (
                 <Image
                   src={user.profilePicUrl}
-                  alt={`${user.username}'s profile picture`}
+                  alt={`${user?.username || 'User'}'s profile picture`}
                   fill
                   className="object-cover"
                 />
@@ -128,29 +161,29 @@ export default function ProfilePage() {
             </div>
             
             <div className="text-center sm:text-left">
-              <h1 className="text-2xl font-bold">{user.fullName || user.username}</h1>
-              <p className="text-gray-600 mb-2">@{user.username} {user.verified && '✓'}</p>
-              
+              <h1 className="text-2xl font-bold">{user?.fullName || user?.username || 'Unknown User'}</h1>
+              <p className="text-gray-600 mb-2">@{user?.username || 'unknown'} {user?.verified && '✓'}</p>
+
               <div className="flex space-x-4 justify-center sm:justify-start">
                 <div>
-                  <span className="font-bold">{user.followersCount.toLocaleString()}</span>
+                  <span className="font-bold">{user?.followersCount?.toLocaleString() || '0'}</span>
                   <span className="text-gray-600 text-sm ml-1">followers</span>
                 </div>
                 <div>
-                  <span className="font-bold">{user.followingCount.toLocaleString()}</span>
+                  <span className="font-bold">{user?.followingCount?.toLocaleString() || '0'}</span>
                   <span className="text-gray-600 text-sm ml-1">following</span>
                 </div>
               </div>
             </div>
           </div>
           
-          {user.biography && (
+          {user?.biography && (
             <div className="mt-4 text-gray-700">
               <p>{user.biography}</p>
             </div>
           )}
-          
-          {user.externalUrl && (
+
+          {user?.externalUrl && (
             <div className="mt-2">
               <a 
                 href={user.externalUrl} 
@@ -166,6 +199,14 @@ export default function ProfilePage() {
           <div className="mt-4 text-xs text-gray-500">
             Data scraped at: {new Date(scrapedAt).toLocaleString()}
           </div>
+          
+          {profileData.status && profileData.status !== 'success' && (
+            <div className="mt-2 text-xs text-yellow-600 bg-yellow-100 p-2 rounded">
+              Note: {profileData.status === 'empty_or_private' 
+                ? 'This account may be private or does not have any public posts.' 
+                : 'There was an issue retrieving complete data for this account.'}
+            </div>
+          )}
         </div>
         
         {/* Posts Grid */}
@@ -173,7 +214,7 @@ export default function ProfilePage() {
           <h2 className="text-xl font-bold mb-4">Posts ({posts.length})</h2>
           
           {posts.length === 0 ? (
-            <p className="text-gray-600">No posts found.</p>
+            <p className="text-gray-600">No posts found. This account may be private or has no public posts.</p>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
               {posts.map((post) => (

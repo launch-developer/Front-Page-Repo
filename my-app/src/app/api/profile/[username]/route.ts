@@ -3,6 +3,7 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 import * as fs from 'fs';
 import * as path from 'path';
+import { scrapeInstagram } from '../../scrape/route';
 
 // Create S3 client
 const s3Client = new S3Client({
@@ -68,21 +69,31 @@ export async function GET(
   request: NextRequest,
   { params }: { params: { username: string } }
 ) {
-  const { username } = params || {};
-  
-  if (!username) {
+  // Make sure username exists before using it
+  if (!params || !params.username) {
     return NextResponse.json(
       { message: 'Invalid username parameter' },
       { status: 400 }
     );
-  }  
+  }
+
+  const username = params.username;
 
   try {
-    // Try to get data from S3 first
+    // First, try to get data from S3
     const s3Data = await getLatestProfileFromS3(username);
     
     if (s3Data) {
+      console.log(`Retrieved data from S3 for ${username}`);
       return NextResponse.json(s3Data);
+    }
+    
+    // If no S3 data, try to scrape
+    console.log(`No data in S3, scraping for ${username}`);
+    const scrapedData = await scrapeInstagram(username);
+    
+    if (scrapedData) {
+      return NextResponse.json(scrapedData);
     }
     
     // Fallback to local file (for development)
@@ -99,10 +110,10 @@ export async function GET(
     const profileData = JSON.parse(fileData);
     
     return NextResponse.json(profileData);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error retrieving profile data:', error);
     return NextResponse.json(
-      { message: 'Failed to retrieve profile data', error },
+      { message: 'Failed to retrieve profile data', error: error.message },
       { status: 500 }
     );
   }
