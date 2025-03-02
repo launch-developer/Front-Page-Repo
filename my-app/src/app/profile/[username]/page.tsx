@@ -145,20 +145,20 @@ export default function ProfilePage() {
         {/* Profile Header */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <div className="flex flex-col sm:flex-row items-center">
-            <div className="w-24 h-24 relative rounded-full overflow-hidden mb-4 sm:mb-0 sm:mr-6">
-              {user?.profilePicUrl ? (
-                <Image
-                  src={user.profilePicUrl}
-                  alt={`${user?.username || 'User'}'s profile picture`}
-                  fill
-                  className="object-cover"
-                />
-              ) : (
-                <div className="w-full h-full bg-gray-300 flex items-center justify-center">
-                  <span className="text-gray-500 text-2xl">?</span>
-                </div>
-              )}
-            </div>
+          <div className="w-24 h-24 relative rounded-full overflow-hidden mb-4 sm:mb-0 sm:mr-6">
+            {user?.profilePicUrl ? (
+              <Image
+                src={user.profilePicUrl}
+                alt={`${user?.username || 'User'}'s profile picture`}
+                fill
+                className="object-cover"
+              />
+            ) : (
+              <div className="w-full h-full bg-gray-300 flex items-center justify-center">
+                <span className="text-gray-500 text-2xl">?</span>
+              </div>
+            )}
+          </div>
             
             <div className="text-center sm:text-left">
               <h1 className="text-2xl font-bold">{user?.fullName || user?.username || 'Unknown User'}</h1>
@@ -220,22 +220,22 @@ export default function ProfilePage() {
               {posts.map((post) => (
                 <div key={post.id} className="border rounded-lg overflow-hidden">
                   <div className="relative pt-[100%]">
-                    {post.images.length > 0 ? (
-                      <Image
-                        src={post.images[0].url}
-                        alt={post.caption || `Post by ${user.username}`}
-                        fill
-                        className="object-cover"
-                      />
-                    ) : post.videos.length > 0 ? (
-                      <div className="absolute inset-0 bg-black flex items-center justify-center">
-                        <span className="text-white">Video</span>
-                      </div>
-                    ) : (
-                      <div className="absolute inset-0 bg-gray-200 flex items-center justify-center">
-                        <span className="text-gray-500">No media</span>
-                      </div>
-                    )}
+                  {post.images.length > 0 ? (
+                    <Image
+                      src={post.images[0].url}
+                      alt={post.caption || `Post by ${user.username}`}
+                      fill
+                      className="object-cover"
+                    />
+                  ) : post.videos.length > 0 ? (
+                    <div className="absolute inset-0 bg-black flex items-center justify-center">
+                      <span className="text-white">Video</span>
+                    </div>
+                  ) : (
+                    <div className="absolute inset-0 bg-gray-200 flex items-center justify-center">
+                      <span className="text-gray-500">No media</span>
+                    </div>
+                  )}
                   </div>
                   
                   <div className="p-3">
