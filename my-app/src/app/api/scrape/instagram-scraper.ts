@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
 import { ApifyClient } from 'apify-client';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import * as fs from 'fs';
-import * as path from 'path';
 import axios from 'axios';
+import { storeProfileData } from '@/lib/mongodb';
 
 // Create S3 client
 const s3Client = new S3Client({
@@ -57,7 +56,6 @@ async function uploadImageToS3(imageUrl: string, username: string, postId: strin
 }
 
 export async function scrapeInstagram(username: string) {
-    console.log('HERE');
   try {
     console.log(`Starting scraper for username: ${username}`);
     
@@ -67,13 +65,20 @@ export async function scrapeInstagram(username: string) {
       throw new Error('API token not configured');
     }
     
-    // Start the Instagram scraper on Apify
+    // Start the Instagram scraper on Apify with improved configuration
     const input = {
       usernames: [username],
       resultsLimit: 100,
-      resultsType: 'posts', // Include both posts and user details
-      searchType: 'user', // Ensure we're searching for users
-      searchLimit: 1, // Limit to just the one user we're looking for
+      resultsType: 'both', // Important: use 'both' to get user details and posts
+      searchType: 'user',
+      search: username, // Add explicit search
+      searchLimit: 1,
+      proxy: {
+        useApifyProxy: true
+      },
+      maxRequestRetries: 5,
+      scrapeStories: false,
+      directUrls: [`https://www.instagram.com/${username}/`] // Add direct URL
     };
     
     // Run the Instagram scraper actor
@@ -81,20 +86,22 @@ export async function scrapeInstagram(username: string) {
     
     // Get dataset items with timeout and retry mechanism
     let retries = 0;
-    let items = [];
+    let items: any[] = [];
     
-    while (retries < 3) {
+    while (retries < 5) { // Increased retries
       try {
+        console.log(`Fetching dataset ${run.defaultDatasetId} (attempt ${retries + 1})`);
         const { items: datasetItems } = await apifyClient
           .dataset(run.defaultDatasetId)
           .listItems();
           
         items = datasetItems;
+        console.log(`Retrieved ${items.length} items from dataset`);
         break;
       } catch (error) {
         retries++;
-        console.log(`Retry ${retries}/3 for dataset fetch`);
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retry
+        console.log(`Retry ${retries}/5 for dataset fetch`);
+        await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
       }
     }
     
@@ -117,54 +124,91 @@ export async function scrapeInstagram(username: string) {
         },
         posts: [],
         scrapedAt: new Date().toISOString(),
-        status: 'empty_or_private'
+        status: 'empty_or_private',
+        error: 'No data returned from scraper'
       };
       
-      // Store this in MongoDB instead of S3
-      await storeInMongoDB(emptyData);
+      // Store this in MongoDB
+      await storeProfileData(emptyData);
       
       return emptyData;
     }
     
-    // Find profile and post items
-    const profile = items.find(item => item.username && !item.shortCode);
+    // Find user profile item - be more lenient in matching
+    const profile = items.find(item => 
+      item.username?.toLowerCase() === username.toLowerCase() && 
+      (item.type === 'user' || item.type === 'profile' || !item.shortCode)
+    );
     
     if (!profile) {
-      return { 
-        user: null, 
+      console.log('Profile not found in scraped data. Items:', items.map(i => ({type: i.type, username: i.username})));
+      
+      // Create default profile from first item if possible
+      const fallbackProfile = items[0];
+      
+      // Create a default response with any available data
+      const fallbackData = {
+        user: {
+          username: username,
+          fullName: fallbackProfile?.fullName || '',
+          biography: fallbackProfile?.biography || 'Profile data could not be completely retrieved.',
+          followersCount: fallbackProfile?.followersCount || 0,
+          followingCount: fallbackProfile?.followingCount || 0,
+          profilePicUrl: fallbackProfile?.profilePicUrl || '',
+          externalUrl: fallbackProfile?.externalUrl || '',
+          verified: fallbackProfile?.verified || false,
+        },
         posts: [],
         scrapedAt: new Date().toISOString(),
-        status: 'no_profile_found'
+        status: 'partial_data',
+        error: 'Profile data not found in scraper response'
       };
+      
+      // Store the fallback data
+      await storeProfileData(fallbackData);
+      
+      return fallbackData;
     }
     
     // Extract user information
     const user = {
-      username: profile.username || '',
+      username: profile.username || username,
       fullName: profile.fullName || '',
       biography: profile.biography || '',
       followersCount: profile.followersCount || 0,
       followingCount: profile.followingCount || 0,
+      profilePicUrl: profile.profilePicUrl || '',
       externalUrl: profile.externalUrl || '',
       verified: profile.verified || false,
     };
     
-    // Upload profile picture to S3 if it exists
-    if (profile.profilePicUrl) {
-      user.profilePicUrl = await uploadImageToS3(
-        profile.profilePicUrl, 
-        username, 
-        'profile', 
-        0
-      );
-    } else {
-      user.profilePicUrl = '';
+    // Upload profile picture to S3 if it exists and S3 is configured
+    if (profile.profilePicUrl && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+      try {
+        user.profilePicUrl = await uploadImageToS3(
+          profile.profilePicUrl, 
+          username, 
+          'profile', 
+          0
+        );
+      } catch (error) {
+        console.error('Error uploading profile pic to S3:', error);
+        // Keep original URL if S3 upload fails
+      }
     }
     
     // Process and upload post images
     const posts = [];
     
-    for (const post of items.filter(item => item.type === 'Post' || item.shortCode)) {
+    // Find all posts
+    const postItems = items.filter(item => 
+      (item.type === 'Post' || item.type === 'post' || item.shortCode) && 
+      item.ownerUsername?.toLowerCase() === username.toLowerCase()
+    );
+    
+    console.log(`Found ${postItems.length} posts for processing`);
+    
+    for (const post of postItems) {
       const postImages = [];
       
       // Process each image in the post
@@ -172,15 +216,25 @@ export async function scrapeInstagram(username: string) {
         for (let i = 0; i < post.images.length; i++) {
           const img = post.images[i];
           if (img && img.url) {
-            const s3ImageUrl = await uploadImageToS3(
-              img.url,
-              username,
-              post.shortCode || `post-${Date.now()}`,
-              i
-            );
+            let imageUrl = img.url;
+            
+            // Upload to S3 if configured
+            if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+              try {
+                imageUrl = await uploadImageToS3(
+                  img.url,
+                  username,
+                  post.shortCode || `post-${Date.now()}`,
+                  i
+                );
+              } catch (error) {
+                console.error('Error uploading post image to S3:', error);
+                // Keep original URL if S3 upload fails
+              }
+            }
             
             postImages.push({
-              url: s3ImageUrl,
+              url: imageUrl,
               width: img.width || 0,
               height: img.height || 0,
             });
@@ -211,9 +265,8 @@ export async function scrapeInstagram(username: string) {
       status: 'success'
     };
     
-    // Store in MongoDB instead of S3 JSON files
-    console.log("STORING IN MONGO");
-    await storeInMongoDB(formattedData);
+    // Store in MongoDB
+    await storeProfileData(formattedData);
     
     return formattedData;
   } catch (error: any) {
@@ -224,7 +277,7 @@ export async function scrapeInstagram(username: string) {
       user: {
         username: username,
         fullName: '',
-        biography: `Error retrieving data: ${error.message}`,
+        biography: 'Error retrieving data.',
         followersCount: 0,
         followingCount: 0,
         profilePicUrl: '',
@@ -234,29 +287,16 @@ export async function scrapeInstagram(username: string) {
       posts: [],
       scrapedAt: new Date().toISOString(),
       status: 'error',
-      error: error.message
+      error: error.message || 'Unknown error during scraping'
     };
     
-    console.log("ERROR STORING IN MONGO");
+    // Try to store error data
+    try {
+      await storeProfileData(errorData);
+    } catch (mongoError) {
+      console.error('Error storing error data in MongoDB:', mongoError);
+    }
+    
     return errorData;
   }
-} 
-
-// Function to store data in MongoDB (placeholder - you'll need to implement this)
-async function storeInMongoDB(data: any) {
-  // Implement your MongoDB storage logic here
-  console.log('Storing data in MongoDB:', data.user.username);
-  
-  // Example MongoDB connection and storage:
-  // const { MongoClient } = require('mongodb');
-  // const client = new MongoClient(process.env.MONGODB_URI);
-  // await client.connect();
-  // const db = client.db('instagram-scraper');
-  // const collection = db.collection('profiles');
-  // await collection.updateOne(
-  //   { 'user.username': data.user.username },
-  //   { $set: data },
-  //   { upsert: true }
-  // );
-  // await client.close();
 }

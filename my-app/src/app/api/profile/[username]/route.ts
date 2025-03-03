@@ -13,6 +13,7 @@ export async function GET(request: NextRequest, props: { params: Promise<{ usern
   }
 
   const username = params.username;
+  console.log(`API request for profile: ${username}`);
 
   try {
     // Try to get data from MongoDB first
@@ -33,13 +34,44 @@ export async function GET(request: NextRequest, props: { params: Promise<{ usern
     
     // If we got here, we couldn't find any data
     return NextResponse.json(
-      { message: 'Profile data not found' },
+      { 
+        message: 'Profile data not found',
+        user: {
+          username: username,
+          biography: 'Profile not found',
+          fullName: '',
+          followersCount: 0,
+          followingCount: 0,
+          profilePicUrl: '',
+          externalUrl: '',
+          verified: false,
+        },
+        posts: [],
+        scrapedAt: new Date().toISOString(),
+        status: 'not_found'
+      },
       { status: 404 }
     );
   } catch (error: any) {
     console.error('Error retrieving profile data:', error);
     return NextResponse.json(
-      { message: 'Failed to retrieve profile data', error: error.message },
+      { 
+        message: 'Failed to retrieve profile data', 
+        error: error.message,
+        user: {
+          username: username,
+          biography: 'Error retrieving profile',
+          fullName: '',
+          followersCount: 0,
+          followingCount: 0,
+          profilePicUrl: '',
+          externalUrl: '',
+          verified: false,
+        },
+        posts: [],
+        scrapedAt: new Date().toISOString(),
+        status: 'error'
+      },
       { status: 500 }
     );
   }
