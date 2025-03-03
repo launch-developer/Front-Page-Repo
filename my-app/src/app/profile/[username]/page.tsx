@@ -48,7 +48,7 @@ interface InstagramData {
 export default function ProfilePage() {
   const params = useParams();
   const router = useRouter();
-  const username = params?.username as string;
+  const [username, setUsername] = useState(params?.username as string);
   
   const [profileData, setProfileData] = useState<InstagramData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -61,7 +61,6 @@ export default function ProfilePage() {
       try {
         console.log(`Fetching profile data for: ${username}`);
         const response = await fetch(`/api/profile/${username}`);
-        
         if (!response.ok) {
           const errorData = await response.json();
           throw new Error(errorData.message || `Error ${response.status}: Failed to fetch profile data`);
@@ -146,67 +145,21 @@ export default function ProfilePage() {
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <div className="flex flex-col sm:flex-row items-center">
           <div className="w-24 h-24 relative rounded-full overflow-hidden mb-4 sm:mb-0 sm:mr-6">
-            {user?.profilePicUrl ? (
-              <Image
-                src={user.profilePicUrl}
-                alt={`${user?.username || 'User'}'s profile picture`}
-                fill
-                className="object-cover"
-              />
-            ) : (
               <div className="w-full h-full bg-gray-300 flex items-center justify-center">
                 <span className="text-gray-500 text-2xl">?</span>
               </div>
-            )}
           </div>
             
             <div className="text-center sm:text-left">
               <h1 className="text-2xl font-bold">{user?.fullName || user?.username || 'Unknown User'}</h1>
-              <p className="text-gray-600 mb-2">@{user?.username || 'unknown'} {user?.verified && '✓'}</p>
-
-              <div className="flex space-x-4 justify-center sm:justify-start">
-                <div>
-                  <span className="font-bold">{user?.followersCount?.toLocaleString() || '0'}</span>
-                  <span className="text-gray-600 text-sm ml-1">followers</span>
-                </div>
-                <div>
-                  <span className="font-bold">{user?.followingCount?.toLocaleString() || '0'}</span>
-                  <span className="text-gray-600 text-sm ml-1">following</span>
-                </div>
-              </div>
+              <p className="text-gray-600 mb-2">@{user?.username || 'unknown'}</p>
             </div>
           </div>
-          
-          {user?.biography && (
-            <div className="mt-4 text-gray-700">
-              <p>{user.biography}</p>
-            </div>
-          )}
-
-          {user?.externalUrl && (
-            <div className="mt-2">
-              <a 
-                href={user.externalUrl} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-blue-600 hover:underline"
-              >
-                {user.externalUrl}
-              </a>
-            </div>
-          )}
           
           <div className="mt-4 text-xs text-gray-500">
             Data scraped at: {new Date(scrapedAt).toLocaleString()}
           </div>
           
-          {profileData.status && profileData.status !== 'success' && (
-            <div className="mt-2 text-xs text-yellow-600 bg-yellow-100 p-2 rounded">
-              Note: {profileData.status === 'empty_or_private' 
-                ? 'This account may be private or does not have any public posts.' 
-                : 'There was an issue retrieving complete data for this account.'}
-            </div>
-          )}
         </div>
         
         {/* Posts Grid */}
@@ -217,40 +170,26 @@ export default function ProfilePage() {
             <p className="text-gray-600">No posts found. This account may be private or has no public posts.</p>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {posts.map((post) => (
-                <div key={post.id} className="border rounded-lg overflow-hidden">
+              {posts.map((image) => (
+                <div key={String(image)} className="border rounded-lg overflow-hidden">
                   <div className="relative pt-[100%]">
-                  {post.images.length > 0 ? (
+                  {image ? (
                     <Image
-                      src={post.images[0].url}
-                      alt={post.caption || `Post by ${user.username}`}
+                      src={image}
+                      alt={`Post by ${user.username}`}
                       fill
                       className="object-cover"
                     />
-                  ) : post.videos.length > 0 ? (
-                    <div className="absolute inset-0 bg-black flex items-center justify-center">
-                      <span className="text-white">Video</span>
-                    </div>
-                  ) : (
+                  ): (
                     <div className="absolute inset-0 bg-gray-200 flex items-center justify-center">
                       <span className="text-gray-500">No media</span>
                     </div>
                   )}
                   </div>
-                  
-                  <div className="p-3">
-                    <div className="flex justify-between text-sm text-gray-600 mb-2">
-                      <span>❤️ {post.likesCount.toLocaleString()}</span>
-                      <span>💬 {post.commentsCount.toLocaleString()}</span>
-                    </div>
-                    
-                    {post.caption && (
-                      <p className="text-sm line-clamp-3">{post.caption}</p>
-                    )}
                     
                     <div className="mt-2">
                       <a
-                        href={post.url}
+                        href={image}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs text-blue-600 hover:underline"
@@ -259,7 +198,6 @@ export default function ProfilePage() {
                       </a>
                     </div>
                   </div>
-                </div>
               ))}
             </div>
           )}

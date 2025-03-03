@@ -36,7 +36,7 @@ async function uploadImageToS3(imageUrl: string, username: string, postId: strin
     const key = `images/${username}/${postId}/${index}.jpg`;
     
     // Upload to S3
-    const bucketName = process.env.S3_BUCKET_NAME || 'instagram-scraper-data';
+    const bucketName = process.env.S3_BUCKET_NAME || 'instagramimagesbucket';
     const command = new PutObjectCommand({
       Bucket: bucketName,
       Key: key,
@@ -60,7 +60,8 @@ export async function scrapeInstagram(username: string) {
     console.log('HERE');
   try {
     console.log(`Starting scraper for username: ${username}`);
-    
+    const url = "https://instagram.com/" + username
+    console.log("URL: ", url)
     // Check if Apify token is set
     if (!process.env.APIFY_API_TOKEN) {
       console.error('APIFY_API_TOKEN is not set in environment variables');
@@ -69,15 +70,17 @@ export async function scrapeInstagram(username: string) {
     
     // Start the Instagram scraper on Apify
     const input = {
-      usernames: [username],
-      resultsLimit: 100,
-      resultsType: 'posts', // Include both posts and user details
-      searchType: 'user', // Ensure we're searching for users
-      searchLimit: 1, // Limit to just the one user we're looking for
+      "directUrls": [url],
+      "resultsLimit": 100,
+      "resultsType": 'posts', // Include both posts and user details
+      "searchType": 'user', // Ensure we're searching for users
+      "searchLimit": 1, // Limit to just the one user we're looking for
     };
     
     // Run the Instagram scraper actor
     const run = await apifyClient.actor("apify/instagram-scraper").call(input);
+    console.log("printing type of run: ");
+    console.log(typeof(run));
     
     // Get dataset items with timeout and retry mechanism
     let retries = 0;
@@ -99,6 +102,7 @@ export async function scrapeInstagram(username: string) {
     }
     
     console.log(`Scraped ${items.length} items for ${username}`);
+    // console.log('Scraped items:', JSON.stringify(items, null, 2));
     
     if (items.length === 0) {
       console.log('No items returned. This could mean the account is private or does not exist.');
@@ -121,88 +125,26 @@ export async function scrapeInstagram(username: string) {
       };
       
       // Store this in MongoDB instead of S3
-      await storeInMongoDB(emptyData);
+      // await storeInMongoDB(emptyData);
       
       return emptyData;
     }
     
     // Find profile and post items
-    const profile = items.find(item => item.username && !item.shortCode);
-    
-    if (!profile) {
-      return { 
-        user: null, 
-        posts: [],
-        scrapedAt: new Date().toISOString(),
-        status: 'no_profile_found'
-      };
-    }
+    console.log("DATA:", items)
     
     // Extract user information
+    const profile = items[0]
     const user = {
-      username: profile.username || '',
-      fullName: profile.fullName || '',
-      biography: profile.biography || '',
-      followersCount: profile.followersCount || 0,
-      followingCount: profile.followingCount || 0,
-      externalUrl: profile.externalUrl || '',
-      verified: profile.verified || false,
+      username: profile.ownerUsername || '',
+      fullName: profile.ownerFullName || '',
     };
-    
-    // Upload profile picture to S3 if it exists
-    if (profile.profilePicUrl) {
-      user.profilePicUrl = await uploadImageToS3(
-        profile.profilePicUrl, 
-        username, 
-        'profile', 
-        0
-      );
-    } else {
-      user.profilePicUrl = '';
-    }
     
     // Process and upload post images
     const posts = [];
-    
-    for (const post of items.filter(item => item.type === 'Post' || item.shortCode)) {
-      const postImages = [];
-      
-      // Process each image in the post
-      if (Array.isArray(post.images) && post.images.length > 0) {
-        for (let i = 0; i < post.images.length; i++) {
-          const img = post.images[i];
-          if (img && img.url) {
-            const s3ImageUrl = await uploadImageToS3(
-              img.url,
-              username,
-              post.shortCode || `post-${Date.now()}`,
-              i
-            );
-            
-            postImages.push({
-              url: s3ImageUrl,
-              width: img.width || 0,
-              height: img.height || 0,
-            });
-          }
-        }
-      }
-      
-      posts.push({
-        id: post.id || `post-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        type: post.type || 'Post',
-        shortCode: post.shortCode || '',
-        caption: post.caption || '',
-        url: post.url || `https://www.instagram.com/p/${post.shortCode || ''}`,
-        commentsCount: post.commentsCount || 0,
-        likesCount: post.likesCount || 0,
-        timestamp: post.timestamp || new Date().toISOString(),
-        images: postImages,
-        videos: post.videoUrls || [],
-        mentions: post.mentions || [],
-        hashtags: post.hashtags || [],
-      });
-    }
+    items.map((item) => {
+      item.images.map(image => posts.push(image))
+    })
     
     const formattedData = {
       user,
@@ -212,8 +154,8 @@ export async function scrapeInstagram(username: string) {
     };
     
     // Store in MongoDB instead of S3 JSON files
-    console.log("STORING IN MONGO");
-    await storeInMongoDB(formattedData);
+    // console.log("STORING IN MONGO");
+    // await storeInMongoDB(formattedData);
     
     return formattedData;
   } catch (error: any) {
