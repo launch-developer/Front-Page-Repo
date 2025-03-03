@@ -57,6 +57,7 @@ async function uploadImageToS3(imageUrl: string, username: string, postId: strin
 }
 
 export async function scrapeInstagram(username: string) {
+    console.log('HERE');
   try {
     console.log(`Starting scraper for username: ${username}`);
     
@@ -69,7 +70,7 @@ export async function scrapeInstagram(username: string) {
     // Start the Instagram scraper on Apify
     const input = {
       usernames: [username],
-      resultsLimit: 50,
+      resultsLimit: 100,
       resultsType: 'posts', // Include both posts and user details
       searchType: 'user', // Ensure we're searching for users
       searchLimit: 1, // Limit to just the one user we're looking for
@@ -211,6 +212,7 @@ export async function scrapeInstagram(username: string) {
     };
     
     // Store in MongoDB instead of S3 JSON files
+    console.log("STORING IN MONGO");
     await storeInMongoDB(formattedData);
     
     return formattedData;
@@ -235,9 +237,10 @@ export async function scrapeInstagram(username: string) {
       error: error.message
     };
     
+    console.log("ERROR STORING IN MONGO");
     return errorData;
   }
-}
+} 
 
 // Function to store data in MongoDB (placeholder - you'll need to implement this)
 async function storeInMongoDB(data: any) {
