@@ -1,11 +1,22 @@
+/**************************************************************
+ *
+ *                     instagram-scraper.jsx
+ *
+ *        Authors: Peter Morganelli, William Goldman, Harry Lynch
+ *           Date: 03/15/2025
+ *
+ *     Summary: Implement the functionality for Apify instagram scraping, which 
+ *              involves downloading the images, uploading them to our S3 
+ *              bucket on AWS, and pulling those images to render on the page
+ * 
+ **************************************************************/
+
 import { NextResponse } from 'next/server';
 import { ApifyClient } from 'apify-client';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import * as fs from 'fs';
-import * as path from 'path';
 import axios from 'axios';
 
-// Create S3 client
+//create an S3 client with credentials and region
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'us-east-1',
   credentials: {
@@ -14,15 +25,14 @@ const s3Client = new S3Client({
   },
 });
 
-// Initialize the ApifyClient with API token
+//init the ApifyClient with API token per documentation
 const apifyClient = new ApifyClient({
   token: process.env.APIFY_API_TOKEN || '',
 });
 
-// Function to upload an image to S3
 async function uploadImageToS3(imageUrl: string, username: string, postId: string, index: number) {
   try {
-    // Download the image
+    //download the actual image
     const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
     const buffer = Buffer.from(response.data);
     
@@ -32,57 +42,58 @@ async function uploadImageToS3(imageUrl: string, username: string, postId: strin
     if (imageUrl.endsWith('.gif')) contentType = 'image/gif';
     if (imageUrl.endsWith('.webp')) contentType = 'image/webp';
     
-    // Generate a key for S3
+    //genarate a key for S3 bucket
     const key = `images/${username}/${postId}/${index}.jpg`;
     
-    // Upload to S3
+    //upload to S3 with public-read ACL so it's accessible in the browser
     const bucketName = process.env.S3_BUCKET_NAME || 'instagramimagesbucket';
     const command = new PutObjectCommand({
       Bucket: bucketName,
       Key: key,
       Body: buffer,
       ContentType: contentType,
+      ACL: 'public-read',
     });
     
     await s3Client.send(command);
     console.log(`Uploaded image to S3: s3://${bucketName}/${key}`);
     
-    // Return the S3 URL
+    // Return the public S3 URL
     return `https://${bucketName}.s3.amazonaws.com/${key}`;
   } catch (error) {
     console.error('Error uploading image to S3:', error);
-    // Return the original URL if there was an error
+    //if there was an error, return the original URL
     return imageUrl;
   }
 }
 
 export async function scrapeInstagram(username: string) {
-    console.log('HERE');
+  console.log('HERE');
   try {
     console.log(`Starting scraper for username: ${username}`);
-    const url = "https://instagram.com/" + username
-    console.log("URL: ", url)
-    // Check if Apify token is set
+    const url = "https://instagram.com/" + username;
+    console.log("URL: ", url);
+
     if (!process.env.APIFY_API_TOKEN) {
       console.error('APIFY_API_TOKEN is not set in environment variables');
       throw new Error('API token not configured');
     }
     
-    // Start the Instagram scraper on Apify
+    //initate apify scraper
     const input = {
       "directUrls": [url],
       "resultsLimit": 100,
-      "resultsType": 'posts', // Include both posts and user details
-      "searchType": 'user', // Ensure we're searching for users
-      "searchLimit": 1, // Limit to just the one user we're looking for
+      "resultsType": 'posts', //include posts
+      "searchType": 'user',   // make srure we're searching for users
+      "searchLimit": 1,       // limit the search to just the one user we're looking for
     };
     
-    // Run the Instagram scraper actor
+    //run the apify actor
     const run = await apifyClient.actor("apify/instagram-scraper").call(input);
     console.log("printing type of run: ");
     console.log(typeof(run));
     
-    // Get dataset items with timeout and retry mechanism
+    //get dataset items with timeout and retry mechanism
     let retries = 0;
     let items = [];
     
@@ -97,17 +108,16 @@ export async function scrapeInstagram(username: string) {
       } catch (error) {
         retries++;
         console.log(`Retry ${retries}/3 for dataset fetch`);
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retry
+        await new Promise(resolve => setTimeout(resolve, 2000)); //wait 2 seconds before retry
       }
     }
-    
+    //verify correct scraping
     console.log(`Scraped ${items.length} items for ${username}`);
-    // console.log('Scraped items:', JSON.stringify(items, null, 2));
     
     if (items.length === 0) {
+      //error check if we shit the bed
       console.log('No items returned. This could mean the account is private or does not exist.');
       
-      // Create a default empty response
       const emptyData = {
         user: {
           username: username,
@@ -124,27 +134,41 @@ export async function scrapeInstagram(username: string) {
         status: 'empty_or_private'
       };
       
-      // Store this in MongoDB instead of S3
-      // await storeInMongoDB(emptyData);
-      
       return emptyData;
     }
     
-    // Find profile and post items
-    console.log("DATA:", items)
+    console.log("DATA:", items);
     
-    // Extract user information
-    const profile = items[0]
+    //first item here for profile details
+    const profile = items[0];
     const user = {
       username: profile.ownerUsername || '',
       fullName: profile.ownerFullName || '',
     };
     
-    // Process and upload post images
-    const posts = [];
-    items.map((item) => {
-      item.images.map(image => posts.push(image))
-    })
+    //process and upload images to S3
+    //each scraped item will be uploaded and each image gets its S3 URL
+    const postsArray = await Promise.all(
+      items.map(async (item) => {
+        if (!item.images || item.images.length === 0) return [];
+        const uploadedImages = await Promise.all(
+          item.images.map(async (image, index) => {
+            // Assume image is either a string URL or an object with a url property
+            const imageUrl = typeof image === 'string' ? image : image.url;
+            return await uploadImageToS3(
+              imageUrl,
+              username,
+              item.shortCode || `post-${Date.now()}`,
+              index
+            );
+          })
+        );
+        return uploadedImages;
+      })
+    );
+    
+    //update the postsArray to a single array of image URLs ?
+    const posts = postsArray.flat();
     
     const formattedData = {
       user,
@@ -153,15 +177,10 @@ export async function scrapeInstagram(username: string) {
       status: 'success'
     };
     
-    // Store in MongoDB instead of S3 JSON files
-    // console.log("STORING IN MONGO");
-    // await storeInMongoDB(formattedData);
-    
     return formattedData;
   } catch (error: any) {
     console.error('Error in scraping:', error);
     
-    // Create fallback data for error case
     const errorData = {
       user: {
         username: username,
@@ -179,26 +198,12 @@ export async function scrapeInstagram(username: string) {
       error: error.message
     };
     
-    console.log("ERROR STORING IN MONGO");
     return errorData;
   }
-} 
+}
 
-// Function to store data in MongoDB (placeholder - you'll need to implement this)
+//this will be implemented by backend team
 async function storeInMongoDB(data: any) {
-  // Implement your MongoDB storage logic here
   console.log('Storing data in MongoDB:', data.user.username);
-  
-  // Example MongoDB connection and storage:
-  // const { MongoClient } = require('mongodb');
-  // const client = new MongoClient(process.env.MONGODB_URI);
-  // await client.connect();
-  // const db = client.db('instagram-scraper');
-  // const collection = db.collection('profiles');
-  // await collection.updateOne(
-  //   { 'user.username': data.user.username },
-  //   { $set: data },
-  //   { upsert: true }
-  // );
-  // await client.close();
+  //our MongoDB storage logic here
 }
